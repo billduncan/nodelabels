@@ -1,0 +1,111 @@
+#!/bin/bash
+#
+# @(#) nodelabels - get specific node labels from nodes
+# @(#) $Id: nodelabels,v 1.10 2022/09/25 20:37:33 bduncan Exp bduncan $
+#
+# Blame:  bill.duncan@beachnet.org
+#
+# Description:
+#   - kubectl get nodes --show-labels is way too verbose
+#   - just show the labels we want to see.
+#
+# Notes:
+#   - another way to get at labels might be through using jq and json.
+#   - eg. for owner and tier labels:
+#
+#     jq '.metadata.labels | "\(.owner) \(.tier)"'
+#
+#######################################################################
+
+export PROGNAME="`basename $0`"
+export labellist
+
+#######################################################################
+
+usage () {
+  [ -n "$1" ] && echo "ERROR:  $*" > /dev/tty
+
+  cat <<- EoM > /dev/tty
+  usage:  $PROGNAME labels
+  where:  labels are a comma delimited set of labels to show
+
+EoM
+
+  exit 1
+}
+
+#######################################################################
+# sanity checks
+
+which kubectl > /dev/null 2>&1             || usage Cannot find kubectl
+[ $# -gt 0 ]                               &&
+  labellist="`echo $* | tr ' ' ,`"         ||
+  usage Need a comma delimited set of labels
+
+#######################################################################
+
+(
+  if [ -n "$context" ]; then
+    kubectl get nodes --show-labels --context $context
+  else
+    kubectl get nodes --show-labels
+  fi
+) |
+
+
+awk '
+  function keysplit(s,reta,sep,     kv,i, nf, a) {
+    nf=split(s, a, sep)
+    for (i in a) {
+      split(a[i], kv, "=")
+      reta[ kv[1] ] = kv[2]
+    }
+    return nf
+  }
+
+  function revsplit(s,reta,sep,     i, nf, a) {
+    nf=split(s, a, sep)
+    for (i in a) reta[a[i]] = i
+    return nf
+  }
+
+  function max(a, b) {
+    return (a > b) ? a : b
+  }
+
+  BEGIN {
+    SUBSEP = ","   # easier for debugging
+    revsplit("'$labellist'", lookingfor, ",")
+  }
+
+  NF {
+    for (i=1; i < 6 ; i++) {
+      r[FNR,i] = $i
+      c[i] = max( c[i], length($i) )
+    }
+
+    keysplit($6,kvin,",")   # split labels on the line to key/value pairs
+
+    for ( i in kvin )
+      if (i in lookingfor)
+        r[FNR,6] = r[FNR,6] " " i "=" kvin[i]
+
+    delete kvin  # need to clean it after each line
+    linecount++
+  }
+
+  END {
+    for (row=1; row <= linecount; row++) {
+      printf "%-*s %-*s  %-*s  %-*s  %-*s %s\n", \
+        c[1], r[row,1], \
+        c[2], r[row,2], \
+        c[3], r[row,3], \
+        c[4], r[row,4], \
+        c[5], r[row,5], \
+              r[row,6]
+    }
+  }
+'
+
+
+
